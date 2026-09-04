@@ -1,5 +1,9 @@
 # BalanceMate
 
+<p align="center">
+  <img src="assets/icon/icon.png" alt="BalanceMate app icon" width="160">
+</p>
+
 BalanceMate is a personal borrowing and lending tracker for the money shared
 between people. Record when you lend, borrow, repay, or receive a repayment;
 see at a glance what you owe and what others owe you; and keep a clear history
