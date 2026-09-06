@@ -1,11 +1,11 @@
 {
-    "name": "balancemate",
-    "short_name": "balancemate",
+    "name": "BalanceMate",
+    "short_name": "BalanceMate",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#071B63",
+    "theme_color": "#093CC6",
+    "description": "A clear, personal record of the money you borrow and lend.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

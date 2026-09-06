@@ -43,3 +43,33 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+keypassword
+key.jks
+android/key.properties
+
+# Local signing credentials and certificate material. Never commit these.
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.pem
+*.key
+**/key.properties
+**/keystore.properties
+**/signing.properties
+
+# Firebase configuration is environment-specific. Keep production projects,
+# API restrictions, and service-account credentials outside source control.
+android/app/google-services.json
+ios/Runner/GoogleService-Info.plist
+lib/firebase_options.dart
+firebase-adminsdk-*.json
+*service-account*.json
+*serviceAccountKey*.json
+
+# Local environment values and machine-specific Android configuration.
+.env
+.env.*
+!.env.example
+android/local.properties
+/android/build/

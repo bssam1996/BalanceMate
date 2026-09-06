@@ -1,4 +1,4 @@
-package com.example.balancemate
+package com.bplusplus.balancemate
 
 import io.flutter.embedding.android.FlutterActivity
 
