@@ -437,12 +437,14 @@ class _BillEditorPageState extends ConsumerState<BillEditorPage> {
   late final TextEditingController _vat;
   late final TextEditingController _service;
   late final TextEditingController _note;
+  late final TextEditingController _newPersonName;
   late List<BillParticipant> _participants;
   late List<BillItem> _items;
   late String _currency;
   late String _payerId;
   late Set<String> _tipPeople;
   late ServiceChargeTiming _serviceTiming;
+  var _isAddingPerson = false;
 
   @override
   void initState() {
@@ -467,6 +469,7 @@ class _BillEditorPageState extends ConsumerState<BillEditorPage> {
       text: _displayPercent(bill?.servicePercent ?? 0),
     );
     _note = TextEditingController(text: bill?.note);
+    _newPersonName = TextEditingController();
   }
 
   @override
@@ -476,6 +479,7 @@ class _BillEditorPageState extends ConsumerState<BillEditorPage> {
     _vat.dispose();
     _service.dispose();
     _note.dispose();
+    _newPersonName.dispose();
     super.dispose();
   }
 
@@ -529,13 +533,14 @@ class _BillEditorPageState extends ConsumerState<BillEditorPage> {
           _SectionHeader(
             title: 'People',
             action: 'Add name',
-            onTap: _addPerson,
+            onTap: () => setState(() => _isAddingPerson = true),
           ),
           const SizedBox(height: 8),
           Card(
             child: Column(
               children: [
                 for (final person in _participants) _personTile(person),
+                if (_isAddingPerson) _newPersonComposer(),
               ],
             ),
           ),
@@ -700,133 +705,71 @@ class _BillEditorPageState extends ConsumerState<BillEditorPage> {
     ),
   );
 
-  Future<void> _addPerson() async {
-    final controller = TextEditingController();
-    final name = await showDialog<String>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Add a name'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          textCapitalization: TextCapitalization.words,
-          decoration: const InputDecoration(hintText: 'e.g. Sam'),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(dialogContext, controller.text),
-            child: const Text('Add'),
-          ),
-        ],
-      ),
-    );
-    controller.dispose();
-    if (name?.trim().isNotEmpty ?? false) {
-      setState(() {
-        final person = BillParticipant(id: _uuid.v4(), name: name!.trim());
-        _participants = [..._participants, person];
-        _tipPeople.add(person.id);
-      });
-    }
-  }
-
-  Future<void> _addItem({BillItem? existing}) async {
-    final name = TextEditingController(text: existing?.name);
-    final amount = TextEditingController(
-      text: existing == null ? '' : _displayMinor(existing.amountMinor),
-    );
-    var people = {
-      ...(existing?.participantIds ?? _participants.map((person) => person.id)),
-    };
-    final saved = await showModalBottomSheet<bool>(
-      context: context,
-      isScrollControlled: true,
-      showDragHandle: true,
-      builder: (sheetContext) => StatefulBuilder(
-        builder: (_, setSheetState) => Padding(
-          padding: EdgeInsets.fromLTRB(
-            20,
-            4,
-            20,
-            MediaQuery.viewInsetsOf(sheetContext).bottom + 24,
-          ),
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text(
-                  existing == null ? 'Add item' : 'Edit item',
-                  style: Theme.of(sheetContext).textTheme.headlineSmall
-                      ?.copyWith(fontWeight: FontWeight.w900),
-                ),
-                const SizedBox(height: 16),
-                TextField(
-                  controller: name,
-                  autofocus: true,
-                  decoration: const InputDecoration(
-                    labelText: 'What was ordered?',
-                  ),
-                ),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: amount,
-                  keyboardType: const TextInputType.numberWithOptions(
-                    decimal: true,
-                  ),
-                  decoration: const InputDecoration(labelText: 'Amount'),
-                ),
-                const SizedBox(height: 16),
-                const Text(
-                  'Who shares this item?',
-                  style: TextStyle(fontWeight: FontWeight.w800),
-                ),
-                for (final person in _participants)
-                  CheckboxListTile(
-                    value: people.contains(person.id),
-                    title: Text(person.name),
-                    onChanged: (checked) => setSheetState(
-                      () => checked == true
-                          ? people.add(person.id)
-                          : people.remove(person.id),
-                    ),
-                  ),
-                const SizedBox(height: 12),
-                FilledButton(
-                  onPressed: () {
-                    if (name.text.trim().isEmpty ||
-                        _minor(amount.text) == null ||
-                        people.isEmpty) {
-                      return;
-                    }
-                    Navigator.pop(sheetContext, true);
-                  },
-                  child: const Text('Save item'),
-                ),
-              ],
+  Widget _newPersonComposer() => Padding(
+    padding: const EdgeInsets.fromLTRB(16, 8, 12, 12),
+    child: Row(
+      children: [
+        Expanded(
+          child: TextField(
+            controller: _newPersonName,
+            autofocus: true,
+            textCapitalization: TextCapitalization.words,
+            textInputAction: TextInputAction.done,
+            onSubmitted: (_) => _commitNewPerson(),
+            decoration: const InputDecoration(
+              hintText: 'Add a name',
+              isDense: true,
             ),
           ),
         ),
-      ),
+        IconButton(
+          tooltip: 'Add name',
+          onPressed: _commitNewPerson,
+          icon: const Icon(Icons.check),
+        ),
+        IconButton(
+          tooltip: 'Cancel',
+          onPressed: () => setState(() {
+            _newPersonName.clear();
+            _isAddingPerson = false;
+          }),
+          icon: const Icon(Icons.close),
+        ),
+      ],
+    ),
+  );
+
+  void _commitNewPerson() {
+    final name = _newPersonName.text.trim();
+    if (name.isEmpty) return;
+    setState(() {
+      final person = BillParticipant(id: _uuid.v4(), name: name);
+      _participants = [..._participants, person];
+      _tipPeople.add(person.id);
+      _newPersonName.clear();
+      _isAddingPerson = false;
+    });
+  }
+
+  Future<void> _addItem({BillItem? existing}) async {
+    final draft = await showModalBottomSheet<_ItemDraft>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (_) =>
+          _ItemEditorSheet(existing: existing, participants: _participants),
     );
-    final minor = _minor(amount.text);
-    if (saved == true && minor != null && name.text.trim().isNotEmpty) {
+    if (draft != null && mounted) {
       setState(() {
         final item = BillItem(
           id: existing?.id ?? _uuid.v4(),
-          name: name.text.trim(),
-          amountMinor: minor,
-          participantIds: people.toList(),
+          name: draft.name,
+          amountMinor: draft.amountMinor,
+          participantIds: draft.participantIds,
         );
         _items = [..._items.where((entry) => entry.id != item.id), item];
       });
     }
-    name.dispose();
-    amount.dispose();
   }
 
   Future<void> _save() async {
@@ -867,6 +810,131 @@ class _BillEditorPageState extends ConsumerState<BillEditorPage> {
       .where((person) => ids.contains(person.id))
       .map((person) => person.name)
       .join(', ');
+}
+
+class _ItemDraft {
+  const _ItemDraft({
+    required this.name,
+    required this.amountMinor,
+    required this.participantIds,
+  });
+  final String name;
+  final int amountMinor;
+  final List<String> participantIds;
+}
+
+class _ItemEditorSheet extends StatefulWidget {
+  const _ItemEditorSheet({required this.existing, required this.participants});
+  final BillItem? existing;
+  final List<BillParticipant> participants;
+
+  @override
+  State<_ItemEditorSheet> createState() => _ItemEditorSheetState();
+}
+
+class _ItemEditorSheetState extends State<_ItemEditorSheet> {
+  late final TextEditingController _name;
+  late final TextEditingController _amount;
+  late Set<String> _people;
+
+  @override
+  void initState() {
+    super.initState();
+    _name = TextEditingController(text: widget.existing?.name);
+    _amount = TextEditingController(
+      text: widget.existing == null
+          ? ''
+          : _displayMinor(widget.existing!.amountMinor),
+    );
+    _people = {...(widget.existing?.participantIds ?? const <String>[])}
+        .where((id) => widget.participants.any((person) => person.id == id))
+        .toSet();
+  }
+
+  @override
+  void dispose() {
+    _name.dispose();
+    _amount.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: EdgeInsets.fromLTRB(
+      20,
+      4,
+      20,
+      MediaQuery.viewInsetsOf(context).bottom + 24,
+    ),
+    child: SingleChildScrollView(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            widget.existing == null ? 'Add item' : 'Edit item',
+            style: Theme.of(
+              context,
+            ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w900),
+          ),
+          const SizedBox(height: 16),
+          TextField(
+            controller: _name,
+            autofocus: true,
+            textInputAction: TextInputAction.next,
+            onChanged: (_) => setState(() {}),
+            decoration: const InputDecoration(labelText: 'What was ordered?'),
+          ),
+          const SizedBox(height: 8),
+          TextField(
+            controller: _amount,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            onChanged: (_) => setState(() {}),
+            decoration: const InputDecoration(labelText: 'Price'),
+          ),
+          const SizedBox(height: 16),
+          const Text(
+            'Who shares this item?',
+            style: TextStyle(fontWeight: FontWeight.w800),
+          ),
+          for (final person in widget.participants)
+            CheckboxListTile(
+              value: _people.contains(person.id),
+              title: Text(person.name),
+              onChanged: (checked) => setState(() {
+                checked == true
+                    ? _people.add(person.id)
+                    : _people.remove(person.id);
+              }),
+            ),
+          const SizedBox(height: 12),
+          FilledButton(
+            onPressed: _canSubmit ? _submit : null,
+            child: const Text('Save item'),
+          ),
+        ],
+      ),
+    ),
+  );
+
+  bool get _canSubmit =>
+      _name.text.trim().isNotEmpty &&
+      _minor(_amount.text) != null &&
+      _people.isNotEmpty;
+
+  void _submit() {
+    final amount = _minor(_amount.text);
+    final name = _name.text.trim();
+    if (name.isEmpty || amount == null || _people.isEmpty) return;
+    Navigator.pop(
+      context,
+      _ItemDraft(
+        name: name,
+        amountMinor: amount,
+        participantIds: _people.toList(),
+      ),
+    );
+  }
 }
 
 class _SectionHeader extends StatelessWidget {
