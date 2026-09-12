@@ -98,13 +98,13 @@ class CloudSyncService {
     for (final transaction in snapshot.transactions) {
       batch.set(
         base.collection('transactions').doc(transaction.id),
-        {...transaction.toJson(), 'ownerId': user.uid},
+        {...transaction.toJson(includeLocalPhoto: false), 'ownerId': user.uid},
         SetOptions(merge: true),
       );
     }
     for (final bill in snapshot.bills) {
       batch.set(base.collection('bills').doc(bill.id), {
-        ...bill.toJson(),
+        ...bill.toJson(includeLocalPhoto: false),
         'ownerId': user.uid,
       }, SetOptions(merge: true));
     }
@@ -114,6 +114,35 @@ class CloudSyncService {
       SetOptions(merge: true),
     );
     await batch.commit();
+  }
+
+  /// Replaces ledger records without deleting the user's account profile.
+  Future<void> replaceLedger(LedgerSnapshot snapshot) async {
+    final user = _auth.currentUser;
+    if (user == null) return;
+    final base = _store.collection('users').doc(user.uid);
+    final snapshots = await Future.wait([
+      base.collection('people').get(),
+      base.collection('transactions').get(),
+      base.collection('bills').get(),
+      base.collection('settings').doc('profile').get(),
+    ]);
+    final references = <DocumentReference>[
+      for (final snapshot in snapshots.take(3))
+        ...(snapshot as QuerySnapshot).docs.map(
+          (document) => document.reference,
+        ),
+      if ((snapshots[3] as DocumentSnapshot).exists)
+        (snapshots[3] as DocumentSnapshot).reference,
+    ];
+    for (var start = 0; start < references.length; start += 450) {
+      final batch = _store.batch();
+      for (final reference in references.skip(start).take(450)) {
+        batch.delete(reference);
+      }
+      await batch.commit();
+    }
+    await upload(snapshot);
   }
 
   Future<LedgerSnapshot?> download() async {

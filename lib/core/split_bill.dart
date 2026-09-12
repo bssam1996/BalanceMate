@@ -42,6 +42,7 @@ class SplitBill {
     required this.participants,
     required this.items,
     required this.payerId,
+    required this.billDate,
     required this.createdAt,
     required this.updatedAt,
     this.tipMinor = 0,
@@ -50,6 +51,7 @@ class SplitBill {
     this.servicePercent = 0,
     this.serviceTiming = ServiceChargeTiming.beforeVat,
     this.note,
+    this.photoPath,
   });
   final String id, title, currencyCode, payerId;
   final List<BillParticipant> participants;
@@ -59,20 +61,28 @@ class SplitBill {
   final double vatPercent, servicePercent;
   final ServiceChargeTiming serviceTiming;
   final String? note;
-  final DateTime createdAt, updatedAt;
+
+  /// A device-only path. It is never synchronized or included in backups.
+  final String? photoPath;
+
+  /// The date on which the bill was incurred, separate from when it was saved.
+  final DateTime billDate, createdAt, updatedAt;
   SplitBill copyWith({
     String? title,
     String? currencyCode,
     List<BillParticipant>? participants,
     List<BillItem>? items,
     String? payerId,
+    DateTime? billDate,
     int? tipMinor,
     List<String>? tipParticipantIds,
     double? vatPercent,
     double? servicePercent,
     ServiceChargeTiming? serviceTiming,
     String? note,
+    String? photoPath,
     DateTime? updatedAt,
+    bool clearPhoto = false,
   }) => SplitBill(
     id: id,
     title: title ?? this.title,
@@ -80,6 +90,7 @@ class SplitBill {
     participants: participants ?? this.participants,
     items: items ?? this.items,
     payerId: payerId ?? this.payerId,
+    billDate: billDate ?? this.billDate,
     createdAt: createdAt,
     updatedAt: updatedAt ?? this.updatedAt,
     tipMinor: tipMinor ?? this.tipMinor,
@@ -88,20 +99,23 @@ class SplitBill {
     servicePercent: servicePercent ?? this.servicePercent,
     serviceTiming: serviceTiming ?? this.serviceTiming,
     note: note ?? this.note,
+    photoPath: clearPhoto ? null : photoPath ?? this.photoPath,
   );
-  Map<String, dynamic> toJson() => {
+  Map<String, dynamic> toJson({bool includeLocalPhoto = true}) => {
     'id': id,
     'title': title,
     'currencyCode': currencyCode,
     'participants': participants.map((e) => e.toJson()).toList(),
     'items': items.map((e) => e.toJson()).toList(),
     'payerId': payerId,
+    'billDate': billDate.toIso8601String(),
     'tipMinor': tipMinor,
     'tipParticipantIds': tipParticipantIds,
     'vatPercent': vatPercent,
     'servicePercent': servicePercent,
     'serviceTiming': serviceTiming.name,
     'note': note,
+    if (includeLocalPhoto) 'photoPath': photoPath,
     'createdAt': createdAt.toIso8601String(),
     'updatedAt': updatedAt.toIso8601String(),
   };
@@ -116,6 +130,10 @@ class SplitBill {
         .map((e) => BillItem.fromJson(e as Map<String, dynamic>))
         .toList(),
     payerId: json['payerId'] as String,
+    // Bills saved before bill dates were introduced use their creation date.
+    billDate: DateTime.parse(
+      json['billDate'] as String? ?? json['createdAt'] as String,
+    ),
     tipMinor: json['tipMinor'] as int? ?? 0,
     tipParticipantIds: List<String>.from(
       json['tipParticipantIds'] as List? ?? [],
@@ -126,6 +144,7 @@ class SplitBill {
       json['serviceTiming'] as String? ?? 'beforeVat',
     ),
     note: json['note'] as String?,
+    photoPath: json['photoPath'] as String?,
     createdAt: DateTime.parse(json['createdAt'] as String),
     updatedAt: DateTime.parse(json['updatedAt'] as String),
   );

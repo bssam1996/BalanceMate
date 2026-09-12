@@ -91,6 +91,7 @@ class LedgerTransaction {
     required this.updatedAt,
     this.dueDate,
     this.note,
+    this.photoPath,
     this.adjustmentDirection,
   });
 
@@ -102,6 +103,9 @@ class LedgerTransaction {
   final DateTime transactionDate;
   final DateTime? dueDate;
   final String? note;
+
+  /// A device-only path. It is deliberately excluded from cloud and backups.
+  final String? photoPath;
   final AdjustmentDirection? adjustmentDirection;
   final DateTime createdAt;
   final DateTime updatedAt;
@@ -130,10 +134,12 @@ class LedgerTransaction {
     DateTime? transactionDate,
     DateTime? dueDate,
     String? note,
+    String? photoPath,
     AdjustmentDirection? adjustmentDirection,
     DateTime? updatedAt,
     bool clearDueDate = false,
     bool clearNote = false,
+    bool clearPhoto = false,
   }) => LedgerTransaction(
     id: id,
     personId: personId ?? this.personId,
@@ -143,12 +149,13 @@ class LedgerTransaction {
     transactionDate: transactionDate ?? this.transactionDate,
     dueDate: clearDueDate ? null : dueDate ?? this.dueDate,
     note: clearNote ? null : note ?? this.note,
+    photoPath: clearPhoto ? null : photoPath ?? this.photoPath,
     adjustmentDirection: adjustmentDirection ?? this.adjustmentDirection,
     createdAt: createdAt,
     updatedAt: updatedAt ?? this.updatedAt,
   );
 
-  Map<String, dynamic> toJson() => {
+  Map<String, dynamic> toJson({bool includeLocalPhoto = true}) => {
     'id': id,
     'personId': personId,
     'kind': kind.name,
@@ -157,6 +164,7 @@ class LedgerTransaction {
     'transactionDate': transactionDate.toIso8601String(),
     'dueDate': dueDate?.toIso8601String(),
     'note': note,
+    if (includeLocalPhoto) 'photoPath': photoPath,
     'adjustmentDirection': adjustmentDirection?.name,
     'createdAt': createdAt.toIso8601String(),
     'updatedAt': updatedAt.toIso8601String(),
@@ -174,6 +182,7 @@ class LedgerTransaction {
             ? null
             : DateTime.parse(json['dueDate'] as String),
         note: json['note'] as String?,
+        photoPath: json['photoPath'] as String?,
         adjustmentDirection: json['adjustmentDirection'] == null
             ? null
             : AdjustmentDirection.values.byName(
@@ -242,6 +251,39 @@ class LedgerSnapshot {
     settings: AppSettings(),
   );
 
+  /// Restores a complete, user-created BalanceMate JSON backup.
+  factory LedgerSnapshot.fromExportJson(String source) {
+    final raw = jsonDecode(source);
+    if (raw is! Map<String, dynamic>) {
+      throw const FormatException('The backup must contain a JSON object.');
+    }
+    if (raw['schemaVersion'] != 1) {
+      throw const FormatException('This backup uses an unsupported format.');
+    }
+
+    List<T> records<T>(String key, T Function(Map<String, dynamic>) fromJson) {
+      final values = raw[key];
+      if (values is! List) {
+        throw FormatException('The backup is missing $key.');
+      }
+      return values.map((value) {
+        if (value is! Map) throw FormatException('A $key record is invalid.');
+        return fromJson(Map<String, dynamic>.from(value));
+      }).toList();
+    }
+
+    final settings = raw['settings'];
+    if (settings is! Map) {
+      throw const FormatException('The backup is missing settings.');
+    }
+    return LedgerSnapshot(
+      people: records('people', Person.fromJson),
+      transactions: records('transactions', LedgerTransaction.fromJson),
+      bills: records('bills', SplitBill.fromJson),
+      settings: AppSettings.fromJson(Map<String, dynamic>.from(settings)),
+    );
+  }
+
   final List<Person> people;
   final List<LedgerTransaction> transactions;
   final List<SplitBill> bills;
@@ -267,9 +309,11 @@ class LedgerSnapshot {
     'exportedAt': DateTime.now().toIso8601String(),
     'people': people.map((person) => person.toJson()).toList(),
     'transactions': transactions
-        .map((transaction) => transaction.toJson())
+        .map((transaction) => transaction.toJson(includeLocalPhoto: false))
         .toList(),
-    'bills': bills.map((bill) => bill.toJson()).toList(),
+    'bills': bills
+        .map((bill) => bill.toJson(includeLocalPhoto: false))
+        .toList(),
     'settings': settings.toJson(),
   });
 }

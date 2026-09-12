@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
 import '../app/providers.dart';
+import '../core/input_limits.dart';
 import '../data/cloud_sync_service.dart';
 
 class ProfilePage extends ConsumerWidget {
@@ -259,6 +260,7 @@ class _EditProfileSheetState extends State<EditProfileSheet> {
           TextField(
             controller: nameController,
             textCapitalization: TextCapitalization.words,
+            maxLength: InputLimits.name,
             decoration: const InputDecoration(
               labelText: 'Name',
               prefixIcon: Icon(Icons.person_outline),
@@ -268,6 +270,7 @@ class _EditProfileSheetState extends State<EditProfileSheet> {
           TextField(
             controller: phoneController,
             keyboardType: TextInputType.phone,
+            maxLength: InputLimits.phone,
             decoration: const InputDecoration(
               labelText: 'Phone number (optional)',
               prefixIcon: Icon(Icons.phone_outlined),
@@ -277,6 +280,7 @@ class _EditProfileSheetState extends State<EditProfileSheet> {
           TextField(
             controller: noteController,
             maxLines: 3,
+            maxLength: InputLimits.note,
             decoration: const InputDecoration(
               labelText: 'Personal note (optional)',
               alignLabelWithHint: true,

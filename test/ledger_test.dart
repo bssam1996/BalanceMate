@@ -32,6 +32,7 @@ void main() {
       title: 'Dinner',
       currencyCode: 'EGP',
       payerId: 'a',
+      billDate: now,
       participants: const [
         BillParticipant(id: 'a', name: 'Aya'),
         BillParticipant(id: 'b', name: 'Basma'),
@@ -49,6 +50,7 @@ void main() {
       vatPercent: 10,
       servicePercent: 10,
       serviceTiming: ServiceChargeTiming.beforeVat,
+      photoPath: 'C:/private/dinner-receipt.jpg',
       createdAt: now,
       updatedAt: now,
     );
@@ -56,6 +58,51 @@ void main() {
     expect(result.total, 1312);
     expect(result.shares.values.reduce((a, b) => a + b), result.total);
     expect(result.shares['a'], greaterThanOrEqualTo(result.shares['b']!));
-    expect(SplitBill.fromJson(bill.toJson()).title, 'Dinner');
+    final restored = SplitBill.fromJson(bill.toJson());
+    expect(restored.title, 'Dinner');
+    expect(restored.billDate, now);
+    expect(restored.photoPath, 'C:/private/dinner-receipt.jpg');
+    expect(bill.toJson(includeLocalPhoto: false), isNot(contains('photoPath')));
+
+    final legacyJson = Map<String, dynamic>.from(bill.toJson())
+      ..remove('billDate');
+    expect(SplitBill.fromJson(legacyJson).billDate, now);
+  });
+
+  test('ledger backup export can be restored', () {
+    final now = DateTime(2026, 9, 8);
+    final snapshot = LedgerSnapshot(
+      people: [
+        Person(id: 'person', name: 'Aya', createdAt: now, updatedAt: now),
+      ],
+      transactions: const [],
+      bills: const [],
+      settings: const AppSettings(defaultCurrencyCode: 'EUR'),
+    );
+
+    final restored = LedgerSnapshot.fromExportJson(snapshot.toExportJson());
+    expect(restored.people.single.name, 'Aya');
+    expect(restored.settings.defaultCurrencyCode, 'EUR');
+  });
+
+  test('local photo paths are excluded from exports', () {
+    final now = DateTime(2026, 9, 8);
+    final transaction = LedgerTransaction(
+      id: 'transaction',
+      personId: 'person',
+      kind: TransactionKind.lent,
+      amountMinor: 1200,
+      currencyCode: 'GBP',
+      transactionDate: now,
+      photoPath: 'C:/private/receipt.jpg',
+      createdAt: now,
+      updatedAt: now,
+    );
+
+    expect(transaction.toJson()['photoPath'], 'C:/private/receipt.jpg');
+    expect(
+      transaction.toJson(includeLocalPhoto: false),
+      isNot(contains('photoPath')),
+    );
   });
 }

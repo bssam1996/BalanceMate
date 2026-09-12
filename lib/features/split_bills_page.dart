@@ -1,11 +1,15 @@
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter/services.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:uuid/uuid.dart';
 
 import '../app/providers.dart';
 import '../app/theme.dart';
 import '../core/formatters.dart';
+import '../core/input_limits.dart';
+import '../core/platform/local_image.dart';
 import '../core/split_bill.dart';
 import 'home_shell.dart' show Frame;
 
@@ -15,7 +19,7 @@ class SplitBillsPage extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final bills = [...ref.watch(ledgerProvider).bills]
-      ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+      ..sort((a, b) => b.billDate.compareTo(a.billDate));
     return Frame(
       title: 'Split bills',
       action: IconButton.filledTonal(
@@ -114,6 +118,8 @@ class _BillCard extends StatelessWidget {
                   children: [
                     Text(
                       bill.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: const TextStyle(fontWeight: FontWeight.w900),
                     ),
                     const SizedBox(height: 3),
@@ -134,7 +140,7 @@ class _BillCard extends StatelessWidget {
                     style: const TextStyle(fontWeight: FontWeight.w900),
                   ),
                   Text(
-                    formatDate(bill.updatedAt),
+                    formatDate(bill.billDate),
                     style: Theme.of(context).textTheme.labelSmall,
                   ),
                 ],
@@ -195,6 +201,14 @@ class BillDetailPage extends ConsumerWidget {
         padding: const EdgeInsets.fromLTRB(20, 8, 20, 32),
         children: [
           _TotalHero(bill: bill, breakdown: breakdown, payer: payer),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              const Icon(Icons.calendar_today_outlined, size: 16),
+              const SizedBox(width: 8),
+              Text('Bill date: ${formatDate(bill.billDate)}'),
+            ],
+          ),
           const SizedBox(height: 22),
           Text(
             'Everyone’s share',
@@ -212,6 +226,28 @@ class BillDetailPage extends ConsumerWidget {
             Text('Note', style: Theme.of(context).textTheme.titleMedium),
             const SizedBox(height: 6),
             Text(bill.note!),
+          ],
+          if (bill.photoPath != null &&
+              supportsLocalImageFiles &&
+              localImageExists(bill.photoPath!)) ...[
+            const SizedBox(height: 18),
+            Text(
+              'Receipt photo',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 8),
+            InkWell(
+              borderRadius: BorderRadius.circular(20),
+              onTap: () => _showBillPhoto(context, bill.photoPath!),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(20),
+                child: SizedBox(
+                  height: 190,
+                  width: double.infinity,
+                  child: LocalImage(path: bill.photoPath!),
+                ),
+              ),
+            ),
           ],
         ],
       ),
@@ -444,6 +480,8 @@ class _BillEditorPageState extends ConsumerState<BillEditorPage> {
   late String _payerId;
   late Set<String> _tipPeople;
   late ServiceChargeTiming _serviceTiming;
+  late DateTime _billDate;
+  String? _photoPath;
   var _isAddingPerson = false;
 
   @override
@@ -462,6 +500,13 @@ class _BillEditorPageState extends ConsumerState<BillEditorPage> {
       ...(bill?.tipParticipantIds ?? _participants.map((item) => item.id)),
     };
     _serviceTiming = bill?.serviceTiming ?? ServiceChargeTiming.beforeVat;
+    _billDate = _dateOnly(bill?.billDate ?? DateTime.now());
+    _photoPath = bill?.photoPath;
+    if (!supportsLocalImageFiles ||
+        _photoPath == null ||
+        !localImageExists(_photoPath!)) {
+      _photoPath = null;
+    }
     _title = TextEditingController(text: bill?.title);
     _tip = TextEditingController(text: _displayMinor(bill?.tipMinor ?? 0));
     _vat = TextEditingController(text: _displayPercent(bill?.vatPercent ?? 0));
@@ -507,10 +552,30 @@ class _BillEditorPageState extends ConsumerState<BillEditorPage> {
           TextField(
             controller: _title,
             textInputAction: TextInputAction.next,
+            maxLength: InputLimits.billTitle,
             decoration: const InputDecoration(
               labelText: 'Bill name (optional)',
               prefixIcon: Icon(Icons.receipt_outlined),
             ),
+          ),
+          const SizedBox(height: 10),
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.calendar_today_outlined),
+            title: const Text('Bill date'),
+            subtitle: Text(formatDate(_billDate)),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () async {
+              final picked = await showDatePicker(
+                context: context,
+                initialDate: _billDate,
+                firstDate: DateTime(1900),
+                lastDate: DateTime(2100),
+              );
+              if (picked != null && mounted) {
+                setState(() => _billDate = _dateOnly(picked));
+              }
+            },
           ),
           const SizedBox(height: 10),
           DropdownButtonFormField<String>(
@@ -566,6 +631,7 @@ class _BillEditorPageState extends ConsumerState<BillEditorPage> {
           TextField(
             controller: _tip,
             keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            inputFormatters: [LengthLimitingTextInputFormatter(12)],
             decoration: const InputDecoration(
               labelText: 'Tip amount',
               prefixIcon: Icon(Icons.volunteer_activism_outlined),
@@ -587,6 +653,7 @@ class _BillEditorPageState extends ConsumerState<BillEditorPage> {
                   keyboardType: const TextInputType.numberWithOptions(
                     decimal: true,
                   ),
+                  inputFormatters: [LengthLimitingTextInputFormatter(6)],
                   decoration: const InputDecoration(labelText: 'Service %'),
                 ),
               ),
@@ -597,6 +664,7 @@ class _BillEditorPageState extends ConsumerState<BillEditorPage> {
                   keyboardType: const TextInputType.numberWithOptions(
                     decimal: true,
                   ),
+                  inputFormatters: [LengthLimitingTextInputFormatter(6)],
                   decoration: const InputDecoration(labelText: 'VAT %'),
                 ),
               ),
@@ -643,8 +711,24 @@ class _BillEditorPageState extends ConsumerState<BillEditorPage> {
             controller: _note,
             minLines: 2,
             maxLines: 4,
+            maxLength: InputLimits.note,
             decoration: const InputDecoration(labelText: 'Note (optional)'),
           ),
+          const SizedBox(height: 14),
+          if (supportsLocalImageFiles)
+            _BillPhotoAttachment(
+              photoPath: _photoPath,
+              onAdd: () async {
+                final picked = await _pickBillPhoto(context);
+                if (picked != null && mounted) {
+                  setState(() => _photoPath = picked);
+                }
+              },
+              onRemove: () => setState(() => _photoPath = null),
+              onUnavailable: () => setState(() => _photoPath = null),
+            )
+          else
+            const _BillPhotoUnavailable(),
           const SizedBox(height: 24),
           FilledButton.icon(
             onPressed: _save,
@@ -715,6 +799,7 @@ class _BillEditorPageState extends ConsumerState<BillEditorPage> {
             autofocus: true,
             textCapitalization: TextCapitalization.words,
             textInputAction: TextInputAction.done,
+            maxLength: InputLimits.name,
             onSubmitted: (_) => _commitNewPerson(),
             decoration: const InputDecoration(
               hintText: 'Add a name',
@@ -742,6 +827,12 @@ class _BillEditorPageState extends ConsumerState<BillEditorPage> {
   void _commitNewPerson() {
     final name = _newPersonName.text.trim();
     if (name.isEmpty) return;
+    if (_participants.length >= InputLimits.maxBillParticipants) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('A bill can include up to 50 people.')),
+      );
+      return;
+    }
     setState(() {
       final person = BillParticipant(id: _uuid.v4(), name: name);
       _participants = [..._participants, person];
@@ -752,6 +843,12 @@ class _BillEditorPageState extends ConsumerState<BillEditorPage> {
   }
 
   Future<void> _addItem({BillItem? existing}) async {
+    if (existing == null && _items.length >= InputLimits.maxBillItems) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('A bill can contain up to 100 items.')),
+      );
+      return;
+    }
     final draft = await showModalBottomSheet<_ItemDraft>(
       context: context,
       isScrollControlled: true,
@@ -796,12 +893,14 @@ class _BillEditorPageState extends ConsumerState<BillEditorPage> {
           participants: _participants,
           items: _items,
           payerId: _payerId,
+          billDate: _billDate,
           tipMinor: tip,
           tipParticipantIds: _tipPeople.toList(),
           vatPercent: vat,
           servicePercent: service,
           serviceTiming: _serviceTiming,
           note: _note.text,
+          photoPath: _photoPath,
         );
     if (mounted) Navigator.pop(context);
   }
@@ -810,6 +909,137 @@ class _BillEditorPageState extends ConsumerState<BillEditorPage> {
       .where((person) => ids.contains(person.id))
       .map((person) => person.name)
       .join(', ');
+}
+
+class _BillPhotoAttachment extends StatelessWidget {
+  const _BillPhotoAttachment({
+    required this.photoPath,
+    required this.onAdd,
+    required this.onRemove,
+    required this.onUnavailable,
+  });
+  final String? photoPath;
+  final Future<void> Function() onAdd;
+  final VoidCallback onRemove;
+  final VoidCallback onUnavailable;
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text(
+        'Receipt photo',
+        style: Theme.of(
+          context,
+        ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w900),
+      ),
+      const SizedBox(height: 4),
+      const Text(
+        'Stored on this device only. It is not uploaded, synced, or included in backups.',
+      ),
+      const SizedBox(height: 10),
+      if (photoPath == null)
+        OutlinedButton.icon(
+          onPressed: onAdd,
+          icon: const Icon(Icons.add_photo_alternate_outlined),
+          label: const Text('Choose a photo'),
+        )
+      else ...[
+        InkWell(
+          borderRadius: BorderRadius.circular(20),
+          onTap: () => _showBillPhoto(context, photoPath!),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(20),
+            child: SizedBox(
+              height: 160,
+              width: double.infinity,
+              child: LocalImage(path: photoPath!, onUnavailable: onUnavailable),
+            ),
+          ),
+        ),
+        Row(
+          children: [
+            TextButton.icon(
+              onPressed: onAdd,
+              icon: const Icon(Icons.swap_horiz_rounded),
+              label: const Text('Change'),
+            ),
+            TextButton.icon(
+              onPressed: onRemove,
+              icon: const Icon(Icons.remove_circle_outline),
+              label: const Text('Remove'),
+            ),
+          ],
+        ),
+      ],
+    ],
+  );
+}
+
+class _BillPhotoUnavailable extends StatelessWidget {
+  const _BillPhotoUnavailable();
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.all(14),
+    decoration: BoxDecoration(
+      color: BalanceMateColors.aqua.withValues(alpha: .10),
+      borderRadius: BorderRadius.circular(16),
+    ),
+    child: const Text(
+      'Receipt photos are available in the installed app. Browser file locations cannot be stored safely.',
+    ),
+  );
+}
+
+Future<String?> _pickBillPhoto(BuildContext context) async {
+  final file = await FilePicker.pickFile(type: FileType.image);
+  if (file == null) return null;
+  final path = file.path;
+  if (path == null || !localImageExists(path)) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('That photo could not be accessed locally.'),
+        ),
+      );
+    }
+    return null;
+  }
+  return path;
+}
+
+Future<void> _showBillPhoto(BuildContext context, String path) async {
+  await showDialog<void>(
+    context: context,
+    builder: (dialogContext) => Dialog(
+      clipBehavior: Clip.antiAlias,
+      child: SizedBox(
+        width: 560,
+        height: 620,
+        child: Stack(
+          children: [
+            Positioned.fill(
+              child: InteractiveViewer(
+                minScale: .8,
+                maxScale: 4,
+                child: LocalImage(path: path, fit: BoxFit.contain),
+              ),
+            ),
+            Positioned(
+              top: 8,
+              right: 8,
+              child: IconButton.filledTonal(
+                tooltip: 'Close photo',
+                onPressed: () => Navigator.pop(dialogContext),
+                icon: const Icon(Icons.close),
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
 }
 
 class _ItemDraft {
@@ -882,6 +1112,7 @@ class _ItemEditorSheetState extends State<_ItemEditorSheet> {
             controller: _name,
             autofocus: true,
             textInputAction: TextInputAction.next,
+            maxLength: InputLimits.itemName,
             onChanged: (_) => setState(() {}),
             decoration: const InputDecoration(labelText: 'What was ordered?'),
           ),
@@ -889,6 +1120,7 @@ class _ItemEditorSheetState extends State<_ItemEditorSheet> {
           TextField(
             controller: _amount,
             keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            inputFormatters: [LengthLimitingTextInputFormatter(12)],
             onChanged: (_) => setState(() {}),
             decoration: const InputDecoration(labelText: 'Price'),
           ),
@@ -1033,16 +1265,26 @@ int? _minor(String value) {
 int? _minorAllowZero(String value) {
   final match = RegExp(r'^(\d+)(?:\.(\d{1,2}))?$').firstMatch(value.trim());
   if (match == null) return null;
-  return int.parse(match.group(1)!) * 100 +
+  final result =
+      int.parse(match.group(1)!) * 100 +
       int.parse((match.group(2) ?? '').padRight(2, '0'));
+  return result <= InputLimits.maxAmountMinor ? result : null;
 }
 
 double? _percent(String value) {
   if (value.trim().isEmpty) return 0;
   final parsed = double.tryParse(value.trim());
-  return parsed == null || parsed < 0 ? null : parsed;
+  return parsed == null ||
+          !parsed.isFinite ||
+          parsed < 0 ||
+          parsed > InputLimits.maxPercent
+      ? null
+      : parsed;
 }
 
 String _displayMinor(int amount) =>
     amount == 0 ? '' : (amount / 100).toStringAsFixed(2);
 String _displayPercent(double value) => value == 0 ? '' : value.toString();
+
+DateTime _dateOnly(DateTime value) =>
+    DateTime(value.year, value.month, value.day);
