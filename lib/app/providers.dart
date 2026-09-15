@@ -52,6 +52,7 @@ class LedgerController extends Notifier<LedgerSnapshot> {
 
   Future<void> savePerson({
     Person? existing,
+    String? newId,
     required String name,
     String? phone,
     String? email,
@@ -61,7 +62,7 @@ class LedgerController extends Notifier<LedgerSnapshot> {
     final now = DateTime.now();
     final person = existing == null
         ? Person(
-            id: _uuid.v4(),
+            id: newId ?? _uuid.v4(),
             name: name.trim(),
             phone: _clean(phone),
             email: _clean(email),
@@ -100,6 +101,7 @@ class LedgerController extends Notifier<LedgerSnapshot> {
 
   Future<void> saveTransaction({
     LedgerTransaction? existing,
+    String? newId,
     required String personId,
     required TransactionKind kind,
     required int amountMinor,
@@ -120,7 +122,7 @@ class LedgerController extends Notifier<LedgerSnapshot> {
     final now = DateTime.now();
     final transaction = existing == null
         ? LedgerTransaction(
-            id: _uuid.v4(),
+            id: newId ?? _uuid.v4(),
             personId: personId,
             kind: kind,
             amountMinor: amountMinor,
@@ -175,6 +177,7 @@ class LedgerController extends Notifier<LedgerSnapshot> {
 
   Future<void> saveBill({
     SplitBill? existing,
+    String? newId,
     required String title,
     required String currencyCode,
     required List<BillParticipant> participants,
@@ -205,7 +208,7 @@ class LedgerController extends Notifier<LedgerSnapshot> {
     final now = DateTime.now();
     final bill = existing == null
         ? SplitBill(
-            id: _uuid.v4(),
+            id: newId ?? _uuid.v4(),
             title: title.trim().isEmpty ? 'Untitled bill' : title.trim(),
             currencyCode: currencyCode,
             participants: participants,

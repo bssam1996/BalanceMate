@@ -417,7 +417,8 @@ class _PersonShare extends StatelessWidget {
                       const SizedBox(width: 6),
                       Expanded(child: Text(item.name)),
                       Text(
-                        '${formatMoney(item.amountMinor, bill.currencyCode)} ÷ ${item.participantIds.length}',
+                        '${formatMoney(item.amountMinor, bill.currencyCode)}'
+                        '${item.participantIds.length > 1 ? ' ÷ ${item.participantIds.length}' : ''}',
                       ),
                     ],
                   ),
@@ -468,6 +469,7 @@ class BillEditorPage extends ConsumerStatefulWidget {
 
 class _BillEditorPageState extends ConsumerState<BillEditorPage> {
   final _uuid = const Uuid();
+  late final String _newBillId = _uuid.v4();
   late final TextEditingController _title;
   late final TextEditingController _tip;
   late final TextEditingController _vat;
@@ -483,6 +485,7 @@ class _BillEditorPageState extends ConsumerState<BillEditorPage> {
   late DateTime _billDate;
   String? _photoPath;
   var _isAddingPerson = false;
+  var _isSaving = false;
 
   @override
   void initState() {
@@ -532,7 +535,12 @@ class _BillEditorPageState extends ConsumerState<BillEditorPage> {
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(
       title: Text(widget.bill == null ? 'New split bill' : 'Edit split bill'),
-      actions: [TextButton(onPressed: _save, child: const Text('Save'))],
+      actions: [
+        TextButton(
+          onPressed: _isSaving ? null : _save,
+          child: Text(_isSaving ? 'Saving…' : 'Save'),
+        ),
+      ],
     ),
     body: SafeArea(
       child: ListView(
@@ -731,9 +739,9 @@ class _BillEditorPageState extends ConsumerState<BillEditorPage> {
             const _BillPhotoUnavailable(),
           const SizedBox(height: 24),
           FilledButton.icon(
-            onPressed: _save,
+            onPressed: _isSaving ? null : _save,
             icon: const Icon(Icons.check),
-            label: const Text('Save split bill'),
+            label: Text(_isSaving ? 'Saving…' : 'Save split bill'),
           ),
         ],
       ),
@@ -870,7 +878,8 @@ class _BillEditorPageState extends ConsumerState<BillEditorPage> {
   }
 
   Future<void> _save() async {
-    final tip = _minorAllowZero(_tip.text);
+    if (_isSaving) return;
+    final tip = _tip.text.trim().isEmpty ? 0 : _minorAllowZero(_tip.text);
     final vat = _percent(_vat.text);
     final service = _percent(_service.text);
     if (tip == null ||
@@ -884,25 +893,37 @@ class _BillEditorPageState extends ConsumerState<BillEditorPage> {
       );
       return;
     }
-    await ref
-        .read(ledgerProvider.notifier)
-        .saveBill(
-          existing: widget.bill,
-          title: _title.text,
-          currencyCode: _currency,
-          participants: _participants,
-          items: _items,
-          payerId: _payerId,
-          billDate: _billDate,
-          tipMinor: tip,
-          tipParticipantIds: _tipPeople.toList(),
-          vatPercent: vat,
-          servicePercent: service,
-          serviceTiming: _serviceTiming,
-          note: _note.text,
-          photoPath: _photoPath,
-        );
-    if (mounted) Navigator.pop(context);
+    setState(() => _isSaving = true);
+    try {
+      await ref
+          .read(ledgerProvider.notifier)
+          .saveBill(
+            existing: widget.bill,
+            newId: _newBillId,
+            title: _title.text,
+            currencyCode: _currency,
+            participants: _participants,
+            items: _items,
+            payerId: _payerId,
+            billDate: _billDate,
+            tipMinor: tip,
+            tipParticipantIds: _tipPeople.toList(),
+            vatPercent: vat,
+            servicePercent: service,
+            serviceTiming: _serviceTiming,
+            note: _note.text,
+            photoPath: _photoPath,
+          );
+      if (mounted) Navigator.pop(context);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _isSaving = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Could not save the bill. Please try again.'),
+        ),
+      );
+    }
   }
 
   String _namesFor(List<String> ids) => _participants

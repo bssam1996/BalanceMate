@@ -4,6 +4,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter/services.dart';
+import 'package:uuid/uuid.dart';
 import '../app/providers.dart';
 import '../app/theme.dart';
 import '../core/formatters.dart';
@@ -1204,12 +1205,14 @@ Future<void> settlePersonBalance(
   final note = TextEditingController(text: 'Settlement');
   var date = _dateOnly(DateTime.now());
   final theyOwe = balance.net > 0;
+  final newId = const Uuid().v4();
+  var isSaving = false;
   await showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
     showDragHandle: true,
     builder: (sheetContext) => StatefulBuilder(
-      builder: (_, setSheetState) => Padding(
+      builder: (sheetContext, setSheetState) => Padding(
         padding: EdgeInsets.fromLTRB(
           20,
           4,
@@ -1299,47 +1302,70 @@ Future<void> settlePersonBalance(
                 style: FilledButton.styleFrom(
                   padding: const EdgeInsets.all(17),
                 ),
-                onPressed: () async {
-                  final value = _minor(amount.text);
-                  if (value == null) {
-                    ScaffoldMessenger.of(sheetContext).showSnackBar(
-                      const SnackBar(
-                        content: Text('Enter a valid payment amount.'),
-                      ),
-                    );
-                    return;
-                  }
-                  if (value > balance.net.abs()) {
-                    ScaffoldMessenger.of(sheetContext).showSnackBar(
-                      const SnackBar(
-                        content: Text(
-                          'A settlement cannot exceed the outstanding balance.',
-                        ),
-                      ),
-                    );
-                    return;
-                  }
-                  await ref
-                      .read(ledgerProvider.notifier)
-                      .saveTransaction(
-                        personId: person.id,
-                        kind: theyOwe
-                            ? TransactionKind.repaymentReceived
-                            : TransactionKind.repaymentMade,
-                        amountMinor: value,
-                        currencyCode: currencyCode,
-                        transactionDate: date,
-                        note: note.text,
-                      );
-                  if (sheetContext.mounted) Navigator.pop(sheetContext);
-                  if (context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Settlement recorded.')),
-                    );
-                  }
-                },
+                onPressed: isSaving
+                    ? null
+                    : () async {
+                        if (isSaving) return;
+                        final value = _minor(amount.text);
+                        if (value == null) {
+                          ScaffoldMessenger.of(sheetContext).showSnackBar(
+                            const SnackBar(
+                              content: Text('Enter a valid payment amount.'),
+                            ),
+                          );
+                          return;
+                        }
+                        if (value > balance.net.abs()) {
+                          ScaffoldMessenger.of(sheetContext).showSnackBar(
+                            const SnackBar(
+                              content: Text(
+                                'A settlement cannot exceed the outstanding balance.',
+                              ),
+                            ),
+                          );
+                          return;
+                        }
+                        setSheetState(() => isSaving = true);
+                        try {
+                          await ref
+                              .read(ledgerProvider.notifier)
+                              .saveTransaction(
+                                newId: newId,
+                                personId: person.id,
+                                kind: theyOwe
+                                    ? TransactionKind.repaymentReceived
+                                    : TransactionKind.repaymentMade,
+                                amountMinor: value,
+                                currencyCode: currencyCode,
+                                transactionDate: date,
+                                note: note.text,
+                              );
+                          if (sheetContext.mounted) Navigator.pop(sheetContext);
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text('Settlement recorded.'),
+                              ),
+                            );
+                          }
+                        } catch (_) {
+                          if (!sheetContext.mounted) return;
+                          setSheetState(() => isSaving = false);
+                          ScaffoldMessenger.of(sheetContext).showSnackBar(
+                            const SnackBar(
+                              content: Text(
+                                'Could not record the settlement. Please try again.',
+                              ),
+                            ),
+                          );
+                        }
+                      },
                 icon: const Icon(Icons.check_circle_outline),
-                label: Text(theyOwe ? 'Record payment' : 'Record repayment'),
+                label: Text(
+                  isSaving
+                      ? 'Saving…'
+                      : (theyOwe ? 'Record payment' : 'Record repayment'),
+                ),
               ),
             ],
           ),
@@ -1564,94 +1590,117 @@ class Empty extends StatelessWidget {
 }
 
 Future<void> editPerson(BuildContext c, WidgetRef r, {Person? p}) async {
+  final newId = const Uuid().v4();
   final name = TextEditingController(text: p?.name);
   final phone = TextEditingController(text: p?.phone);
   final email = TextEditingController(text: p?.email);
   final note = TextEditingController(text: p?.note);
+  var isSaving = false;
   await showModalBottomSheet<void>(
     context: c,
     isScrollControlled: true,
     showDragHandle: true,
-    builder: (d) => Padding(
-      padding: EdgeInsets.fromLTRB(
-        20,
-        4,
-        20,
-        MediaQuery.viewInsetsOf(d).bottom + 24,
-      ),
-      child: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text(
-              p == null ? 'Add a person' : 'Edit person',
-              style: Theme.of(
-                d,
-              ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w900),
-            ),
-            const SizedBox(height: 6),
-            const Text('Give every balance a familiar face.'),
-            const SizedBox(height: 22),
-            TextField(
-              controller: name,
-              autofocus: true,
-              maxLength: InputLimits.name,
-              textCapitalization: TextCapitalization.words,
-              decoration: const InputDecoration(
-                labelText: 'Name',
-                prefixIcon: Icon(Icons.person_outline),
+    builder: (d) => StatefulBuilder(
+      builder: (d, set) => Padding(
+        padding: EdgeInsets.fromLTRB(
+          20,
+          4,
+          20,
+          MediaQuery.viewInsetsOf(d).bottom + 24,
+        ),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                p == null ? 'Add a person' : 'Edit person',
+                style: Theme.of(d).textTheme.headlineSmall?.copyWith(
+                  fontWeight: FontWeight.w900,
+                ),
               ),
-            ),
-            const SizedBox(height: 10),
-            TextField(
-              controller: phone,
-              maxLength: InputLimits.phone,
-              keyboardType: TextInputType.phone,
-              decoration: const InputDecoration(
-                labelText: 'Phone (optional)',
-                prefixIcon: Icon(Icons.phone_outlined),
+              const SizedBox(height: 6),
+              const Text('Give every balance a familiar face.'),
+              const SizedBox(height: 22),
+              TextField(
+                controller: name,
+                autofocus: true,
+                maxLength: InputLimits.name,
+                textCapitalization: TextCapitalization.words,
+                decoration: const InputDecoration(
+                  labelText: 'Name',
+                  prefixIcon: Icon(Icons.person_outline),
+                ),
               ),
-            ),
-            const SizedBox(height: 10),
-            TextField(
-              controller: email,
-              maxLength: InputLimits.email,
-              keyboardType: TextInputType.emailAddress,
-              decoration: const InputDecoration(
-                labelText: 'Email (optional)',
-                prefixIcon: Icon(Icons.mail_outline),
+              const SizedBox(height: 10),
+              TextField(
+                controller: phone,
+                maxLength: InputLimits.phone,
+                keyboardType: TextInputType.phone,
+                decoration: const InputDecoration(
+                  labelText: 'Phone (optional)',
+                  prefixIcon: Icon(Icons.phone_outlined),
+                ),
               ),
-            ),
-            const SizedBox(height: 10),
-            TextField(
-              controller: note,
-              maxLength: InputLimits.note,
-              maxLines: 2,
-              decoration: const InputDecoration(
-                labelText: 'Private note (optional)',
+              const SizedBox(height: 10),
+              TextField(
+                controller: email,
+                maxLength: InputLimits.email,
+                keyboardType: TextInputType.emailAddress,
+                decoration: const InputDecoration(
+                  labelText: 'Email (optional)',
+                  prefixIcon: Icon(Icons.mail_outline),
+                ),
               ),
-            ),
-            const SizedBox(height: 22),
-            FilledButton.icon(
-              style: FilledButton.styleFrom(padding: const EdgeInsets.all(17)),
-              onPressed: () async {
-                if (name.text.trim().isEmpty) return;
-                await r
-                    .read(ledgerProvider.notifier)
-                    .savePerson(
-                      existing: p,
-                      name: name.text,
-                      phone: phone.text,
-                      email: email.text,
-                      note: note.text,
-                    );
-                if (d.mounted) Navigator.pop(d);
-              },
-              icon: const Icon(Icons.check),
-              label: const Text('Save person'),
-            ),
-          ],
+              const SizedBox(height: 10),
+              TextField(
+                controller: note,
+                maxLength: InputLimits.note,
+                maxLines: 2,
+                decoration: const InputDecoration(
+                  labelText: 'Private note (optional)',
+                ),
+              ),
+              const SizedBox(height: 22),
+              FilledButton.icon(
+                style: FilledButton.styleFrom(
+                  padding: const EdgeInsets.all(17),
+                ),
+                onPressed: isSaving
+                    ? null
+                    : () async {
+                        if (isSaving) return;
+                        if (name.text.trim().isEmpty) return;
+                        set(() => isSaving = true);
+                        try {
+                          await r
+                              .read(ledgerProvider.notifier)
+                              .savePerson(
+                                existing: p,
+                                newId: newId,
+                                name: name.text,
+                                phone: phone.text,
+                                email: email.text,
+                                note: note.text,
+                              );
+                          if (d.mounted) Navigator.pop(d);
+                        } catch (_) {
+                          if (!d.mounted) return;
+                          set(() => isSaving = false);
+                          ScaffoldMessenger.of(d).showSnackBar(
+                            const SnackBar(
+                              content: Text(
+                                'Could not save the person. Please try again.',
+                              ),
+                            ),
+                          );
+                        }
+                      },
+                icon: const Icon(Icons.check),
+                label: Text(isSaving ? 'Saving…' : 'Save person'),
+              ),
+            ],
+          ),
         ),
       ),
     ),
@@ -1670,6 +1719,7 @@ Future<void> editTransaction(
     return;
   }
   var person = t?.personId ?? personId ?? s.people.first.id;
+  final newId = const Uuid().v4();
   var kind = t?.kind ?? TransactionKind.lent;
   var currency = t?.currencyCode ?? s.settings.defaultCurrencyCode;
   var transactionDate = _dateOnly(t?.transactionDate ?? DateTime.now());
@@ -1684,6 +1734,7 @@ Future<void> editTransaction(
     text: t == null ? '' : (t.amountMinor / 100).toStringAsFixed(2),
   );
   final note = TextEditingController(text: t?.note);
+  var isSaving = false;
   await showModalBottomSheet<void>(
     context: c,
     isScrollControlled: true,
@@ -1874,45 +1925,64 @@ Future<void> editTransaction(
                 style: FilledButton.styleFrom(
                   padding: const EdgeInsets.all(17),
                 ),
-                onPressed: () async {
-                  final minor = _minor(amount.text);
-                  if (minor == null || minor > InputLimits.maxAmountMinor) {
-                    ScaffoldMessenger.of(d).showSnackBar(
-                      const SnackBar(
-                        content: Text(
-                          'Enter a valid amount within the supported range.',
-                        ),
-                      ),
-                    );
-                    return;
-                  }
-                  if (dueDate != null && dueDate!.isBefore(transactionDate)) {
-                    ScaffoldMessenger.of(d).showSnackBar(
-                      const SnackBar(
-                        content: Text(
-                          'The due date cannot be before the transaction date.',
-                        ),
-                      ),
-                    );
-                    return;
-                  }
-                  await r
-                      .read(ledgerProvider.notifier)
-                      .saveTransaction(
-                        existing: t,
-                        personId: person,
-                        kind: kind,
-                        amountMinor: minor,
-                        currencyCode: currency,
-                        transactionDate: transactionDate,
-                        dueDate: dueDate,
-                        note: note.text,
-                        photoPath: photoPath,
-                      );
-                  if (d.mounted) Navigator.pop(d);
-                },
+                onPressed: isSaving
+                    ? null
+                    : () async {
+                        if (isSaving) return;
+                        final minor = _minor(amount.text);
+                        if (minor == null ||
+                            minor > InputLimits.maxAmountMinor) {
+                          ScaffoldMessenger.of(d).showSnackBar(
+                            const SnackBar(
+                              content: Text(
+                                'Enter a valid amount within the supported range.',
+                              ),
+                            ),
+                          );
+                          return;
+                        }
+                        if (dueDate != null &&
+                            dueDate!.isBefore(transactionDate)) {
+                          ScaffoldMessenger.of(d).showSnackBar(
+                            const SnackBar(
+                              content: Text(
+                                'The due date cannot be before the transaction date.',
+                              ),
+                            ),
+                          );
+                          return;
+                        }
+                        set(() => isSaving = true);
+                        try {
+                          await r
+                              .read(ledgerProvider.notifier)
+                              .saveTransaction(
+                                existing: t,
+                                newId: newId,
+                                personId: person,
+                                kind: kind,
+                                amountMinor: minor,
+                                currencyCode: currency,
+                                transactionDate: transactionDate,
+                                dueDate: dueDate,
+                                note: note.text,
+                                photoPath: photoPath,
+                              );
+                          if (d.mounted) Navigator.pop(d);
+                        } catch (_) {
+                          if (!d.mounted) return;
+                          set(() => isSaving = false);
+                          ScaffoldMessenger.of(d).showSnackBar(
+                            const SnackBar(
+                              content: Text(
+                                'Could not save the entry. Please try again.',
+                              ),
+                            ),
+                          );
+                        }
+                      },
                 icon: const Icon(Icons.check),
-                label: const Text('Save entry'),
+                label: Text(isSaving ? 'Saving…' : 'Save entry'),
               ),
             ],
           ),
