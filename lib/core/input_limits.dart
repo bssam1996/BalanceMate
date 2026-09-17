@@ -11,4 +11,6 @@ abstract final class InputLimits {
   static const maxPercent = 100;
   static const maxBillParticipants = 50;
   static const maxBillItems = 100;
+  static const maxBillImportCharacters = 32768;
+  static const maxBillItemQuantity = 9999;
 }

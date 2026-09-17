@@ -100,6 +100,228 @@ Finder _field(String label) => find.byWidgetPredicate(
 );
 
 void main() {
+  testWidgets(
+    'bulk import appends once and survives failed save retry and reopening',
+    (tester) async {
+      final bill = SplitBill(
+        id: 'bill',
+        title: 'Dinner',
+        currencyCode: 'GBP',
+        participants: const [
+          BillParticipant(id: 'a', name: 'Alex'),
+          BillParticipant(id: 'b', name: 'Jamie'),
+        ],
+        items: const [
+          BillItem(
+            id: 'existing',
+            name: 'Starter',
+            amountMinor: 500,
+            participantIds: ['a'],
+          ),
+        ],
+        payerId: 'a',
+        billDate: DateTime(2026),
+        createdAt: DateTime(2026),
+        updatedAt: DateTime(2026),
+      );
+      final repository = await _pumpApp(
+        tester,
+        home: BillEditorPage(bill: bill),
+      );
+      expect(find.text('Add item'), findsOneWidget);
+      expect(find.text('Paste items'), findsOneWidget);
+      await tester.tap(find.text('Paste items'));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const ValueKey('bill-import-text')),
+        'Soup,2,12.50',
+      );
+      await tester.pump();
+      await tester.tap(find.text('Review items'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Assign people'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Everyone'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Review summary'));
+      await tester.pumpAndSettle();
+      expect(repository.snapshots, isEmpty);
+      final commit = tester
+          .widget<FilledButton>(
+            find.widgetWithText(FilledButton, 'Add 1 item to bill'),
+          )
+          .onPressed!;
+      commit();
+      commit();
+      await tester.pumpAndSettle();
+      expect(repository.snapshots, isEmpty);
+      await tester.tap(find.text('Save'));
+      await tester.pump();
+      final saved = repository.snapshots.single.bills.single;
+      expect(saved.items, hasLength(2));
+      expect(saved.items.first.id, 'existing');
+      expect(saved.items.last.quantity, 2);
+      expect(saved.items.last.participantIds, ['a', 'b']);
+      expect(calculateBill(saved).itemShares, {'a': 1750, 'b': 1250});
+      repository.fail();
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Save'));
+      await tester.pump();
+      expect(
+        repository.snapshots.last.bills.single.items.map((item) => item.id),
+        saved.items.map((item) => item.id),
+      );
+      repository.fail();
+      await tester.pumpAndSettle();
+      final restored = SplitBill.fromJson(saved.toJson());
+      await tester.pumpWidget(const SizedBox.shrink());
+      await _pumpApp(tester, home: BillEditorPage(bill: restored));
+      await tester.tap(find.text('Soup'));
+      await tester.pumpAndSettle();
+      expect(
+        tester.widget<TextField>(_field('Quantity')).controller!.text,
+        '2',
+      );
+      expect(
+        tester.widget<TextField>(_field('Unit price')).controller!.text,
+        '12.50',
+      );
+      expect(
+        tester
+            .widget<CheckboxListTile>(
+              find.widgetWithText(CheckboxListTile, 'Alex'),
+            )
+            .value,
+        isTrue,
+      );
+      expect(
+        tester
+            .widget<CheckboxListTile>(
+              find.widgetWithText(CheckboxListTile, 'Jamie'),
+            )
+            .value,
+        isTrue,
+      );
+    },
+  );
+
+  for (final shared in [false, true]) {
+    testWidgets(
+      'item quantity previews, edits and saves (${shared ? 'shared' : 'solo'})',
+      (tester) async {
+        final bill = SplitBill(
+          id: 'bill',
+          title: 'Dinner',
+          currencyCode: 'GBP',
+          participants: const [
+            BillParticipant(id: 'a', name: 'Alex'),
+            BillParticipant(id: 'b', name: 'Jamie'),
+          ],
+          items: const [],
+          payerId: 'a',
+          billDate: DateTime(2026),
+          createdAt: DateTime(2026),
+          updatedAt: DateTime(2026),
+        );
+        final repository = await _pumpApp(
+          tester,
+          home: BillEditorPage(bill: bill),
+        );
+        await tester.tap(find.text('Add item'));
+        await tester.pumpAndSettle();
+        expect(
+          tester.widget<TextField>(_field('Quantity')).controller!.text,
+          '1',
+        );
+        await tester.enterText(_field('What was ordered?'), 'Soup');
+        await tester.enterText(_field('Unit price'), '12.50');
+        await tester.pump();
+        expect(find.text('Total: ${formatMoney(1250, 'GBP')}'), findsOneWidget);
+        await tester.enterText(_field('Quantity'), '2');
+        await tester.pump();
+        expect(find.text('Total: ${formatMoney(2500, 'GBP')}'), findsOneWidget);
+        await tester.tap(find.widgetWithText(CheckboxListTile, 'Alex'));
+        if (shared) {
+          await tester.tap(find.widgetWithText(CheckboxListTile, 'Jamie'));
+        }
+        await tester.pump();
+        final save = tester
+            .widget<FilledButton>(
+              find.widgetWithText(FilledButton, 'Save item'),
+            )
+            .onPressed!;
+        save();
+        save();
+        await tester.pumpAndSettle();
+        expect(find.byType(BillEditorPage), findsOneWidget);
+        await tester.tap(find.text('Soup'));
+        await tester.pumpAndSettle();
+        expect(
+          tester.widget<TextField>(_field('Quantity')).controller!.text,
+          '2',
+        );
+        expect(
+          tester.widget<TextField>(_field('Unit price')).controller!.text,
+          '12.50',
+        );
+        await tester.enterText(_field('Quantity'), '3');
+        await tester.pump();
+        expect(find.text('Total: ${formatMoney(3750, 'GBP')}'), findsOneWidget);
+        await tester.tap(find.text('Save item'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Save'));
+        await tester.pump();
+        final saved = repository.snapshots.single.bills.single;
+        expect(saved.items.single.quantity, 3);
+        expect(saved.items.single.amountMinor, 1250);
+        expect(
+          calculateBill(saved).itemShares,
+          shared ? {'a': 1875, 'b': 1875} : {'a': 3750, 'b': 0},
+        );
+        repository.fail();
+        await tester.pumpAndSettle();
+
+        await tester.tap(find.byTooltip('Remove Jamie'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Save'));
+        await tester.pump();
+        expect(repository.snapshots.last.bills.single.items.single.quantity, 3);
+        repository.fail();
+        await tester.pumpAndSettle();
+      },
+    );
+  }
+
+  testWidgets('item rejects invalid quantities and excessive totals', (
+    tester,
+  ) async {
+    await _pumpApp(tester);
+    await tester.tap(find.text('Bill'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Add item'));
+    await tester.pumpAndSettle();
+    await tester.enterText(_field('What was ordered?'), 'Soup');
+    await tester.enterText(_field('Unit price'), '10');
+    await tester.pump();
+    await tester.tap(find.widgetWithText(CheckboxListTile, 'Me'));
+    final save = find.widgetWithText(FilledButton, 'Save item');
+    for (final quantity in ['', '0', '-1', '1.5']) {
+      await tester.enterText(_field('Quantity'), quantity);
+      await tester.pump();
+      expect(tester.widget<FilledButton>(save).onPressed, isNull);
+      expect(find.text('Total: —'), findsOneWidget);
+    }
+    await tester.enterText(_field('Quantity'), '2');
+    await tester.pump();
+    await tester.enterText(_field('Unit price'), '999999999.99');
+    await tester.pump();
+    expect(tester.widget<FilledButton>(save).onPressed, isNull);
+    expect(find.textContaining('The item total exceeds'), findsOneWidget);
+    await tester.enterText(_field('Unit price'), '10');
+    await tester.pump();
+    expect(tester.widget<FilledButton>(save).onPressed, isNotNull);
+  });
+
   testWidgets('bill saves blank charges as zero and guards both save buttons', (
     tester,
   ) async {
@@ -229,6 +451,7 @@ void main() {
           id: 'shared',
           name: 'Pizza',
           amountMinor: 1200,
+          quantity: 2,
           participantIds: ['a', 'b'],
         ),
       ],
@@ -245,6 +468,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text(formatMoney(500, 'GBP')), findsOneWidget);
     expect(find.textContaining('÷ 1'), findsNothing);
-    expect(find.text('${formatMoney(1200, 'GBP')} ÷ 2'), findsNWidgets(2));
+    expect(find.text('Pizza × 2'), findsNWidgets(2));
+    expect(find.text('${formatMoney(2400, 'GBP')} ÷ 2'), findsNWidgets(2));
   });
 }

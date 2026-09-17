@@ -4,6 +4,76 @@ import 'package:balancemate/core/split_bill.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('item quantity survives JSON and old items default to one', () {
+    const item = BillItem(
+      id: 'meal',
+      name: 'Meal',
+      amountMinor: 1250,
+      quantity: 2,
+      participantIds: ['a', 'b'],
+    );
+    final restored = BillItem.fromJson(item.toJson());
+    expect(restored.quantity, 2);
+    expect(restored.amountMinor, 1250);
+    expect(restored.totalMinor, 2500);
+    final legacy = BillItem.fromJson({...item.toJson()}..remove('quantity'));
+    expect(legacy.quantity, 1);
+    expect(legacy.totalMinor, 1250);
+  });
+
+  test('quantities determine item shares and percentage charges', () {
+    final bill = SplitBill(
+      id: 'bill',
+      title: 'Dinner',
+      currencyCode: 'GBP',
+      participants: const [
+        BillParticipant(id: 'a', name: 'Alex'),
+        BillParticipant(id: 'b', name: 'Jamie'),
+      ],
+      items: const [
+        BillItem(
+          id: 'meal',
+          name: 'Meal',
+          amountMinor: 1000,
+          quantity: 2,
+          participantIds: ['a', 'b'],
+        ),
+      ],
+      payerId: 'a',
+      servicePercent: 10,
+      vatPercent: 10,
+      billDate: DateTime(2026),
+      createdAt: DateTime(2026),
+      updatedAt: DateTime(2026),
+    );
+    final result = calculateBill(bill);
+    expect(result.subtotal, 2000);
+    expect(result.service, 200);
+    expect(result.vat, 220);
+    expect(result.shares, {'a': 1210, 'b': 1210});
+    expect(billText(bill), contains('Meal × 2'));
+
+    final solo = calculateBill(
+      bill.copyWith(
+        items: const [
+          BillItem(
+            id: 'meal',
+            name: 'Meal',
+            amountMinor: 1000,
+            quantity: 2,
+            participantIds: ['a'],
+          ),
+        ],
+      ),
+    );
+    expect(solo.shares, {'a': 2420, 'b': 0});
+    final restored = LedgerSnapshot.fromExportJson(
+      LedgerSnapshot.empty().copyWith(bills: [bill]).toExportJson(),
+    );
+    expect(restored.bills.single.items.single.quantity, 2);
+    expect(calculateBill(restored.bills.single).total, 2420);
+  });
+
   test('ledger effects calculate owed and owing balances', () {
     final now = DateTime(2026);
     LedgerTransaction tx(TransactionKind kind, int amount) => LedgerTransaction(

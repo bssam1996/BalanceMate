@@ -15,6 +15,7 @@ import '../core/platform/exporter.dart';
 import '../core/platform/local_image.dart';
 import 'profile_page.dart';
 import 'split_bills_page.dart';
+import 'share_app_tile.dart';
 
 class HomeShell extends ConsumerStatefulWidget {
   const HomeShell({super.key});
@@ -925,6 +926,16 @@ class Settings extends ConsumerWidget {
                 )
                 .toList(),
             onChanged: (v) => ctl.updateDefaultCurrency(v!),
+          ),
+          const SizedBox(height: 20),
+          const Card(
+            child: Column(
+              children: [
+                ShareAppTile(),
+                Divider(height: 1),
+                RateAppTile(),
+              ],
+            ),
           ),
           const SizedBox(height: 20),
           Card(

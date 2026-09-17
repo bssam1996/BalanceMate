@@ -2,16 +2,18 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter/services.dart';
-import 'package:share_plus/share_plus.dart';
 import 'package:uuid/uuid.dart';
 
 import '../app/providers.dart';
 import '../app/theme.dart';
 import '../core/formatters.dart';
+import '../core/bill_items_import.dart';
 import '../core/input_limits.dart';
 import '../core/platform/local_image.dart';
 import '../core/split_bill.dart';
 import 'home_shell.dart' show Frame;
+import 'bill_items_import_page.dart';
+import 'bill_share_button.dart';
 
 class SplitBillsPage extends ConsumerWidget {
   const SplitBillsPage({super.key});
@@ -178,13 +180,7 @@ class BillDetailPage extends ConsumerWidget {
       appBar: AppBar(
         title: Text(bill.title),
         actions: [
-          IconButton(
-            tooltip: 'Share bill',
-            onPressed: () => SharePlus.instance.share(
-              ShareParams(text: billText(bill), subject: bill.title),
-            ),
-            icon: const Icon(Icons.ios_share_rounded),
-          ),
+          BillShareButton(bill: bill),
           IconButton(
             tooltip: 'Edit bill',
             onPressed: () => openBillEditor(context, bill: bill),
@@ -415,9 +411,13 @@ class _PersonShare extends StatelessWidget {
                     children: [
                       const Icon(Icons.restaurant_menu_outlined, size: 16),
                       const SizedBox(width: 6),
-                      Expanded(child: Text(item.name)),
+                      Expanded(
+                        child: Text(
+                          '${item.name}${item.quantity > 1 ? ' × ${item.quantity}' : ''}',
+                        ),
+                      ),
                       Text(
-                        '${formatMoney(item.amountMinor, bill.currencyCode)}'
+                        '${formatMoney(item.totalMinor, bill.currencyCode)}'
                         '${item.participantIds.length > 1 ? ' ÷ ${item.participantIds.length}' : ''}',
                       ),
                     ],
@@ -486,6 +486,7 @@ class _BillEditorPageState extends ConsumerState<BillEditorPage> {
   String? _photoPath;
   var _isAddingPerson = false;
   var _isSaving = false;
+  var _isImporting = false;
 
   @override
   void initState() {
@@ -618,10 +619,34 @@ class _BillEditorPageState extends ConsumerState<BillEditorPage> {
             ),
           ),
           const SizedBox(height: 24),
-          _SectionHeader(title: 'Items', action: 'Add item', onTap: _addItem),
+          Text(
+            'Items',
+            style: Theme.of(
+              context,
+            ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 10,
+            runSpacing: 8,
+            children: [
+              OutlinedButton.icon(
+                onPressed: _addItem,
+                icon: const Icon(Icons.add),
+                label: const Text('Add item'),
+              ),
+              FilledButton.tonalIcon(
+                onPressed: _isImporting ? null : _pasteItems,
+                icon: const Icon(Icons.playlist_add),
+                label: const Text('Paste items'),
+              ),
+            ],
+          ),
           const SizedBox(height: 8),
           if (_items.isEmpty)
-            _HintCard('No items yet. Add what was ordered and who shared it.')
+            _HintCard(
+              'Add items one at a time, or paste a list of everything ordered.',
+            )
           else
             Card(
               child: Column(
@@ -768,6 +793,7 @@ class _BillEditorPageState extends ConsumerState<BillEditorPage> {
                       id: item.id,
                       name: item.name,
                       amountMinor: item.amountMinor,
+                      quantity: item.quantity,
                       participantIds: item.participantIds
                           .where((id) => id != person.id)
                           .toList(),
@@ -786,7 +812,8 @@ class _BillEditorPageState extends ConsumerState<BillEditorPage> {
     leading: const Icon(Icons.restaurant_menu_outlined),
     title: Text(item.name),
     subtitle: Text(
-      '${formatMoney(item.amountMinor, _currency)} · ${_namesFor(item.participantIds)}',
+      '${item.quantity > 1 ? '${item.quantity} × ${formatMoney(item.amountMinor, _currency)} = ' : ''}'
+      '${formatMoney(item.totalMinor, _currency)} · ${_namesFor(item.participantIds)}',
     ),
     trailing: IconButton(
       tooltip: 'Remove ${item.name}',
@@ -850,6 +877,69 @@ class _BillEditorPageState extends ConsumerState<BillEditorPage> {
     });
   }
 
+  Future<void> _pasteItems() async {
+    if (_isImporting) return;
+    if (_items.length >= InputLimits.maxBillItems) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('A bill can contain up to 100 items.')),
+      );
+      return;
+    }
+    setState(() => _isImporting = true);
+    try {
+      final rows = await Navigator.push<List<BillImportDraft>>(
+        context,
+        MaterialPageRoute(
+          builder: (_) => BillItemsImportPage(
+            currencyCode: _currency,
+            participants: List.of(_participants),
+            existingItems: List.of(_items),
+          ),
+        ),
+      );
+      if (!mounted || rows == null || rows.isEmpty) return;
+      final ids = _participants.map((person) => person.id).toSet();
+      if (_items.length + rows.length > InputLimits.maxBillItems ||
+          rows.any(
+            (row) =>
+                !row.isValid ||
+                row.participantIds.isEmpty ||
+                !row.participantIds.every(ids.contains),
+          )) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Check item limits and people before adding the list.',
+            ),
+          ),
+        );
+        return;
+      }
+      setState(() {
+        _items = [
+          ..._items,
+          for (final row in rows)
+            BillItem(
+              id: _uuid.v4(),
+              name: row.name.trim(),
+              amountMinor: row.amountMinor!,
+              quantity: row.quantity!,
+              participantIds: row.participantIds.toList(),
+            ),
+        ];
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '${rows.length} ${rows.length == 1 ? 'item' : 'items'} added',
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _isImporting = false);
+    }
+  }
+
   Future<void> _addItem({BillItem? existing}) async {
     if (existing == null && _items.length >= InputLimits.maxBillItems) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -861,8 +951,11 @@ class _BillEditorPageState extends ConsumerState<BillEditorPage> {
       context: context,
       isScrollControlled: true,
       showDragHandle: true,
-      builder: (_) =>
-          _ItemEditorSheet(existing: existing, participants: _participants),
+      builder: (_) => _ItemEditorSheet(
+        existing: existing,
+        participants: _participants,
+        currencyCode: _currency,
+      ),
     );
     if (draft != null && mounted) {
       setState(() {
@@ -870,6 +963,7 @@ class _BillEditorPageState extends ConsumerState<BillEditorPage> {
           id: existing?.id ?? _uuid.v4(),
           name: draft.name,
           amountMinor: draft.amountMinor,
+          quantity: draft.quantity,
           participantIds: draft.participantIds,
         );
         _items = [..._items.where((entry) => entry.id != item.id), item];
@@ -956,7 +1050,7 @@ class _BillPhotoAttachment extends StatelessWidget {
       ),
       const SizedBox(height: 4),
       const Text(
-        'Stored on this device only. It is not uploaded, synced, or included in backups.',
+        'Stored on this device. You can include it when sharing a bill. It is not synced or included in backups.',
       ),
       const SizedBox(height: 10),
       if (photoPath == null)
@@ -1067,17 +1161,24 @@ class _ItemDraft {
   const _ItemDraft({
     required this.name,
     required this.amountMinor,
+    required this.quantity,
     required this.participantIds,
   });
   final String name;
   final int amountMinor;
+  final int quantity;
   final List<String> participantIds;
 }
 
 class _ItemEditorSheet extends StatefulWidget {
-  const _ItemEditorSheet({required this.existing, required this.participants});
+  const _ItemEditorSheet({
+    required this.existing,
+    required this.participants,
+    required this.currencyCode,
+  });
   final BillItem? existing;
   final List<BillParticipant> participants;
+  final String currencyCode;
 
   @override
   State<_ItemEditorSheet> createState() => _ItemEditorSheetState();
@@ -1086,12 +1187,17 @@ class _ItemEditorSheet extends StatefulWidget {
 class _ItemEditorSheetState extends State<_ItemEditorSheet> {
   late final TextEditingController _name;
   late final TextEditingController _amount;
+  late final TextEditingController _quantity;
   late Set<String> _people;
+  var _isSubmitting = false;
 
   @override
   void initState() {
     super.initState();
     _name = TextEditingController(text: widget.existing?.name);
+    _quantity = TextEditingController(
+      text: (widget.existing?.quantity ?? 1).toString(),
+    );
     _amount = TextEditingController(
       text: widget.existing == null
           ? ''
@@ -1106,6 +1212,7 @@ class _ItemEditorSheetState extends State<_ItemEditorSheet> {
   void dispose() {
     _name.dispose();
     _amount.dispose();
+    _quantity.dispose();
     super.dispose();
   }
 
@@ -1143,13 +1250,44 @@ class _ItemEditorSheetState extends State<_ItemEditorSheet> {
             keyboardType: const TextInputType.numberWithOptions(decimal: true),
             inputFormatters: [LengthLimitingTextInputFormatter(12)],
             onChanged: (_) => setState(() {}),
-            decoration: const InputDecoration(labelText: 'Price'),
+            decoration: InputDecoration(
+              labelText: 'Unit price',
+              suffixText: widget.currencyCode,
+            ),
           ),
+          const SizedBox(height: 8),
+          TextField(
+            controller: _quantity,
+            keyboardType: TextInputType.number,
+            inputFormatters: [LengthLimitingTextInputFormatter(4)],
+            onChanged: (_) => setState(() {}),
+            decoration: InputDecoration(
+              labelText: 'Quantity',
+              errorText: _quantityValue == null
+                  ? 'Enter a whole number from 1 to ${InputLimits.maxBillItemQuantity}.'
+                  : null,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Text(
+            _totalMinor == null
+                ? 'Total: —'
+                : 'Total: ${formatMoney(_totalMinor!, widget.currencyCode)}',
+            style: Theme.of(
+              context,
+            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
+          ),
+          if (_totalMinor != null && _totalMinor! > InputLimits.maxAmountMinor)
+            Text(
+              'The item total exceeds the supported amount. Reduce the price or quantity.',
+              style: TextStyle(color: Theme.of(context).colorScheme.error),
+            ),
           const SizedBox(height: 16),
           const Text(
             'Who shares this item?',
             style: TextStyle(fontWeight: FontWeight.w800),
           ),
+          const Text('The total is split equally between the selected people.'),
           for (final person in widget.participants)
             CheckboxListTile(
               value: _people.contains(person.id),
@@ -1171,19 +1309,40 @@ class _ItemEditorSheetState extends State<_ItemEditorSheet> {
   );
 
   bool get _canSubmit =>
+      !_isSubmitting &&
       _name.text.trim().isNotEmpty &&
-      _minor(_amount.text) != null &&
+      _totalMinor != null &&
+      _totalMinor! <= InputLimits.maxAmountMinor &&
       _people.isNotEmpty;
 
+  int? get _quantityValue {
+    final text = _quantity.text.trim();
+    if (!RegExp(r'^\d+$').hasMatch(text)) return null;
+    final value = int.tryParse(text);
+    return value != null &&
+            value >= 1 &&
+            value <= InputLimits.maxBillItemQuantity
+        ? value
+        : null;
+  }
+
+  int? get _totalMinor {
+    final amount = _minor(_amount.text);
+    final quantity = _quantityValue;
+    return amount == null || quantity == null ? null : amount * quantity;
+  }
+
   void _submit() {
+    if (!_canSubmit) return;
     final amount = _minor(_amount.text);
     final name = _name.text.trim();
-    if (name.isEmpty || amount == null || _people.isEmpty) return;
+    setState(() => _isSubmitting = true);
     Navigator.pop(
       context,
       _ItemDraft(
         name: name,
-        amountMinor: amount,
+        amountMinor: amount!,
+        quantity: _quantityValue!,
         participantIds: _people.toList(),
       ),
     );

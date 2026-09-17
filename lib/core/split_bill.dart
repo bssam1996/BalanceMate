@@ -1,3 +1,5 @@
+import 'formatters.dart' show formatDate;
+
 class BillParticipant {
   const BillParticipant({required this.id, required this.name});
   final String id;
@@ -13,21 +15,28 @@ class BillItem {
     required this.name,
     required this.amountMinor,
     required this.participantIds,
+    this.quantity = 1,
   });
   final String id;
   final String name;
+
+  /// Price of one unit, in minor currency units.
   final int amountMinor;
+  final int quantity;
+  int get totalMinor => amountMinor * quantity;
   final List<String> participantIds;
   Map<String, dynamic> toJson() => {
     'id': id,
     'name': name,
     'amountMinor': amountMinor,
+    'quantity': quantity,
     'participantIds': participantIds,
   };
   factory BillItem.fromJson(Map<String, dynamic> json) => BillItem(
     id: json['id'] as String,
     name: json['name'] as String,
     amountMinor: json['amountMinor'] as int,
+    quantity: json['quantity'] as int? ?? 1,
     participantIds: List<String>.from(json['participantIds'] as List),
   );
 }
@@ -208,9 +217,9 @@ BillBreakdown calculateBill(SplitBill bill) {
   }
 
   var subtotal = 0;
-  for (final item in bill.items.where((item) => item.amountMinor > 0)) {
-    subtotal += item.amountMinor;
-    giveEvenly(itemShares, item.amountMinor, item.participantIds);
+  for (final item in bill.items.where((item) => item.totalMinor > 0)) {
+    subtotal += item.totalMinor;
+    giveEvenly(itemShares, item.totalMinor, item.participantIds);
   }
   final vatOnSubtotal = (subtotal * bill.vatPercent / 100).round();
   final serviceBase = bill.serviceTiming == ServiceChargeTiming.beforeVat
@@ -262,35 +271,69 @@ BillBreakdown calculateBill(SplitBill bill) {
 
 String billText(SplitBill bill) {
   final breakdown = calculateBill(bill);
+  String singleLine(String value) =>
+      value.trim().replaceAll(RegExp(r'\s+'), ' ');
   final names = {
     for (final participant in bill.participants)
-      participant.id: participant.name,
+      participant.id: singleLine(participant.name),
   };
   String amount(int minor) =>
       '${(minor / 100).toStringAsFixed(2)} ${bill.currencyCode}';
+  String percent(double value) =>
+      value == value.truncateToDouble() ? '${value.toInt()}' : '$value';
   final lines = <String>[
-    bill.title,
-    'Total ${amount(breakdown.total)}',
-    'Paid by ${names[bill.payerId] ?? 'Unknown'}',
+    bill.title.trim().isEmpty ? 'Split bill' : singleLine(bill.title),
+    'Date: ${formatDate(bill.billDate)}',
+    'Paid by: ${names[bill.payerId] ?? 'Unknown'}',
     '',
-    'Bill details',
-    'Items: ${amount(breakdown.subtotal)}',
-    if (breakdown.service > 0) 'Service: ${amount(breakdown.service)}',
-    if (breakdown.vat > 0) 'VAT: ${amount(breakdown.vat)}',
-    if (breakdown.tip > 0) 'Tip: ${amount(breakdown.tip)}',
+    'TOTAL: ${amount(breakdown.total)}',
     '',
-    'What each person owes',
+    "EACH PERSON'S ORDER",
   ];
-  for (final participant in bill.participants) {
-    final items = bill.items
-        .where((item) => item.participantIds.contains(participant.id))
-        .map((item) => item.name)
-        .join(', ');
+  for (final (index, participant) in bill.participants.indexed) {
+    final id = participant.id;
+    final items = bill.items.where((item) => item.participantIds.contains(id));
+    if (index > 0) lines.add('');
     lines.add(
-      '${participant.name}: ${amount(breakdown.shares[participant.id] ?? 0)}'
-      '${items.isEmpty ? '' : ' — $items'}',
+      '${names[id]}: ${amount(breakdown.shares[id] ?? 0)}'
+      '${id == bill.payerId ? ' (paid the bill)' : ''}',
     );
+    if (items.isEmpty) lines.add('  No items assigned.');
+    for (final item in items) {
+      final count = item.participantIds.toSet().where(names.containsKey).length;
+      lines.add(
+        '  • ${singleLine(item.name)}${item.quantity > 1 ? ' × ${item.quantity}' : ''}'
+        ' — ${amount(item.totalMinor)}${count > 1 ? ' ÷ $count people (shared)' : ''}',
+      );
+    }
+    final service = breakdown.serviceShares[id] ?? 0;
+    final vat = breakdown.vatShares[id] ?? 0;
+    final tip = breakdown.tipShares[id] ?? 0;
+    if (service > 0 || vat > 0 || tip > 0) {
+      lines.addAll([
+        '  Items subtotal: ${amount(breakdown.itemShares[id] ?? 0)}',
+        if (service > 0) '  Service: ${amount(service)}',
+        if (vat > 0) '  VAT: ${amount(vat)}',
+        if (tip > 0) '  Tip: ${amount(tip)}',
+      ]);
+    }
   }
-  if (bill.note?.isNotEmpty ?? false) lines.add('\nNote: ${bill.note}');
+  lines.addAll([
+    '',
+    'BILL BREAKDOWN',
+    'Items subtotal: ${amount(breakdown.subtotal)}',
+    if (breakdown.service > 0 &&
+        bill.serviceTiming == ServiceChargeTiming.beforeVat)
+      'Service (${percent(bill.servicePercent)}%): ${amount(breakdown.service)}',
+    if (breakdown.vat > 0)
+      'VAT (${percent(bill.vatPercent)}%): ${amount(breakdown.vat)}',
+    if (breakdown.service > 0 &&
+        bill.serviceTiming == ServiceChargeTiming.afterVat)
+      'Service (${percent(bill.servicePercent)}%, after VAT): ${amount(breakdown.service)}',
+    if (breakdown.tip > 0) 'Tip: ${amount(breakdown.tip)}',
+  ]);
+  if (bill.note?.trim().isNotEmpty ?? false) {
+    lines.addAll(['', 'NOTE', bill.note!.trim()]);
+  }
   return lines.join('\n');
 }

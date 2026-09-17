@@ -418,10 +418,13 @@ class LedgerController extends Notifier<LedgerSnapshot> {
           item.name.trim().length > InputLimits.itemName ||
           item.amountMinor <= 0 ||
           item.amountMinor > InputLimits.maxAmountMinor ||
+          item.quantity < 1 ||
+          item.quantity > InputLimits.maxBillItemQuantity ||
+          item.totalMinor > InputLimits.maxAmountMinor ||
           item.participantIds.isEmpty ||
           item.participantIds.any((id) => !ids.contains(id))) {
         throw ArgumentError(
-          'Each item needs a valid name, amount, and at least one participant.',
+          'Each item needs a valid name, unit price, quantity, total, and at least one participant.',
         );
       }
     }
